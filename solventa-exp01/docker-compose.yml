@@ -1,0 +1,100 @@
+x-log: &log
+  LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+
+services:
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    ports: ["15672:15672"]
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  gateway:
+    build: ./gateway
+    ports: ["5000:5000"]
+    environment:
+      <<: *log
+      SERVICE_ID: gateway
+    depends_on:
+      rabbitmq: {condition: service_healthy}
+
+  rating1:
+    build: ./rating
+    environment:
+      <<: *log
+      SERVICE_ID: rating1
+      RATING_MODE: normal
+      RATING_QUEUE: q.rating1.comando
+    depends_on:
+      rabbitmq: {condition: service_healthy}
+    restart: on-failure
+
+  rating2:
+    build: ./rating
+    environment:
+      <<: *log
+      SERVICE_ID: rating2
+      RATING_MODE: normal
+      RATING_QUEUE: q.rating2.comando
+    depends_on:
+      rabbitmq: {condition: service_healthy}
+    restart: on-failure
+
+  rating3:
+    build: ./rating
+    environment:
+      <<: *log
+      SERVICE_ID: rating3
+      RATING_MODE: "${RATING3_MODE:-divergente}"
+      RATING_QUEUE: q.rating3.comando
+    depends_on:
+      rabbitmq: {condition: service_healthy}
+    restart: on-failure
+
+  validator:
+    build: ./validator
+    ports: ["8000:8000"]
+    environment:
+      <<: *log
+      SERVICE_ID: validator
+      REPLICAS: "3"
+      TIMEOUT_S: "${TIMEOUT_S:-0.08}"
+    depends_on:
+      rabbitmq: {condition: service_healthy}
+    restart: on-failure
+
+  locust:
+    image: locustio/locust:2.32.4
+    profiles: ["carga"]
+    volumes: ["./locust:/mnt/locust"]
+    depends_on: [gateway]
+    command: >
+      -f /mnt/locust/locustfile.py
+      --host http://gateway:5000
+      --headless
+      -u ${USERS:-50}
+      -r ${SPAWN:-10}
+      -t ${DURATION:-2m}
+      --csv /mnt/locust/resultados/${RUN:-corrida}
+      --only-summary
+
+  prometheus:
+    image: prom/prometheus
+    volumes: ["./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml"]
+    ports: ["9090:9090"]
+
+  grafana:
+    image: grafana/grafana
+    ports: ["3000:3000"]
+    depends_on: [prometheus]
+    environment:
+      # Sin login: el tablero abre directo, util para grabar la demostracion.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/exp01.json
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning
+      - ./grafana/dashboards:/var/lib/grafana/dashboards
