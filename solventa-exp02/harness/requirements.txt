@@ -1,0 +1,15 @@
+# Dependencias del arnes de EXP-02.
+#
+# El esqueleto actual (config.py, veredicto.py) corre solo con la biblioteca
+# estandar de Python 3.11. Por eso este archivo no declara ninguna dependencia.
+#
+# Se agregaran conforme los pasos del plan lo exijan, y solo cuando el codigo
+# que las usa exista. No se anaden librerias "por si acaso": cada una amplia la
+# superficie del arnes y hay que poder justificarla en la sustentacion.
+#
+# Previsto (NO instalar todavia):
+#   - cliente HTTP con soporte mTLS        -> casos de confidencialidad y mTLS
+#   - cliente Kafka                        -> casos de integridad
+#   - libreria JWS                         -> generar eventos firmados y mutados
+#   - driver del almacen                   -> verificar no persistencia del PAN
+#   - framework de pruebas                 -> ejecucion y reporte de casos

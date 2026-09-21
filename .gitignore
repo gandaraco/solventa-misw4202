@@ -1,0 +1,121 @@
+# .gitignore del repositorio Solventa (MISW4202 - Arquitecturas Agiles de Software)
+#
+# Regla de oro: ningun material criptografico, secreto, captura de trafico ni
+# evidencia generada entra al historial. Todo eso se regenera localmente con los
+# scripts del experimento.
+#
+# Nota: ignorar un patron NO deja de rastrear lo que ya esta versionado. Los
+# archivos que hoy estan en el indice (por ejemplo los resultados de EXP-01)
+# siguen igual; estas reglas aplican de aqui en adelante.
+
+# ---------------------------------------------------------------------------
+# Material criptografico y certificados generados  [EXP-02: Donaldo]
+# ---------------------------------------------------------------------------
+# Las claves privadas nunca se versionan. Los certificados publicos tampoco:
+# se regeneran con el script de generacion, y asi evitamos un repositorio con
+# material a medio versionar.
+*.key
+*.pem
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.truststore
+*.crt
+*.cer
+*.csr
+*.der
+
+# Carpeta de material criptografico del experimento: se versiona solo el
+# generador, nunca su salida.
+solventa-exp02/certs/*
+!solventa-exp02/certs/.gitkeep
+!solventa-exp02/certs/generar-certs.sh
+
+# ---------------------------------------------------------------------------
+# Secretos y configuracion local
+# ---------------------------------------------------------------------------
+# .env contiene la configuracion de cada maquina y, en EXP-02, rutas y
+# credenciales. Se versiona unicamente la plantilla .env.example.
+.env
+.env.*
+!.env.example
+!.env.example.*
+
+secrets.*
+*.secret
+*.secrets
+credentials.*
+*credentials.json
+*service-account*.json
+.htpasswd
+
+# ---------------------------------------------------------------------------
+# Capturas de trafico  [EXP-02: Tibisay]
+# ---------------------------------------------------------------------------
+# Una captura puede contener datos sensibles en claro y pesa demasiado para el
+# repositorio. Se versiona el resumen del analisis y el hash del archivo, nunca
+# la captura.
+*.pcap
+*.pcapng
+*.cap
+solventa-exp02/harness/captura/salida/
+
+# ---------------------------------------------------------------------------
+# Evidencia generada  [EXP-02: Tibisay]
+# ---------------------------------------------------------------------------
+# La evidencia cruda de cada corrida es un artefacto local. Solo los reportes
+# consolidados de las corridas oficiales se agregan a mano y de forma explicita.
+solventa-exp02/evidencias/*
+!solventa-exp02/evidencias/.gitkeep
+
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+
+# Entornos virtuales
+.venv/
+venv/
+ENV/
+env/
+.virtualenv/
+
+# Herramientas de prueba
+.pytest_cache/
+.tox/
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# ---------------------------------------------------------------------------
+# Sistema operativo
+# ---------------------------------------------------------------------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+desktop.ini
+
+# ---------------------------------------------------------------------------
+# Editores e IDE
+# ---------------------------------------------------------------------------
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/

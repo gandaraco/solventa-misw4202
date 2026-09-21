@@ -1,0 +1,60 @@
+{
+  "_aviso": "NUMEROS SINTETICOS DE PRUEBA. Ninguno corresponde a una tarjeta emitida ni a un titular real. Son los valores de documentacion publica que usan las pasarelas de pago en sus entornos de prueba, mas variantes construidas a proposito para este arnes. PROHIBIDO reemplazarlos por un PAN real, aunque sea propio: este archivo se versiona.",
+  "_uso": "Insumo del control CONF-99 y, mas adelante, de los casos de confidencialidad. El campo 'marcador' es una etiqueta unica que acompana al PAN cuando se inyecta en una transaccion de prueba, para poder rastrear en que artefacto aparecio cada valor sin tener que escribir el PAN en el reporte.",
+  "_esquema": {
+    "id": "identificador estable del caso",
+    "valor": "cadena tal como se presenta al detector",
+    "digitos": "cantidad de digitos tras normalizar",
+    "luhn_valido": "resultado esperado del algoritmo de Luhn",
+    "debe_detectarse": "veredicto esperado del detector",
+    "marcador": "etiqueta de trazabilidad (solo en los casos inyectables)",
+    "nota": "por que este caso esta en la lista"
+  },
+
+  "validos": [
+    {"id": "visa_16",          "valor": "4111111111111111",    "digitos": 16, "luhn_valido": true, "debe_detectarse": true, "marcador": "EXP02-PAN-A1", "nota": "Valor de prueba publico mas comun. Caso base del control CONF-99."},
+    {"id": "visa_16_alt",      "valor": "4012888888881881",    "digitos": 16, "luhn_valido": true, "debe_detectarse": true, "marcador": "EXP02-PAN-A2", "nota": "Segundo valor de 16 digitos, para distinguir transacciones."},
+    {"id": "mastercard_16",    "valor": "5555555555554444",    "digitos": 16, "luhn_valido": true, "debe_detectarse": true, "marcador": "EXP02-PAN-B1", "nota": "Rango 5xxx: comprueba que el detector no depende del BIN."},
+    {"id": "mastercard_16_alt","valor": "5105105105105100",    "digitos": 16, "luhn_valido": true, "debe_detectarse": true, "marcador": "EXP02-PAN-B2", "nota": "Termina en 00, borde para el enmascarado."},
+    {"id": "amex_15",          "valor": "378282246310005",     "digitos": 15, "luhn_valido": true, "debe_detectarse": true, "marcador": "EXP02-PAN-C1", "nota": "15 digitos: longitud distinta de la habitual de 16."},
+    {"id": "amex_15_alt",      "valor": "371449635398431",     "digitos": 15, "luhn_valido": true, "debe_detectarse": true, "marcador": "EXP02-PAN-C2", "nota": "Segundo valor de 15 digitos."},
+    {"id": "discover_16",      "valor": "6011111111111117",    "digitos": 16, "luhn_valido": true, "debe_detectarse": true, "marcador": "EXP02-PAN-D1", "nota": "Rango 6xxx."},
+    {"id": "jcb_16",           "valor": "3530111333300000",    "digitos": 16, "luhn_valido": true, "debe_detectarse": true, "marcador": "EXP02-PAN-E1", "nota": "Termina en cuatro ceros: borde del enmascarado."},
+    {"id": "diners_14",        "valor": "30569309025904",      "digitos": 14, "luhn_valido": true, "debe_detectarse": true, "marcador": "EXP02-PAN-F1", "nota": "14 digitos."},
+    {"id": "limite_13",        "valor": "4222222222222",       "digitos": 13, "luhn_valido": true, "debe_detectarse": true, "marcador": "EXP02-PAN-G1", "nota": "Limite inferior de la norma ISO/IEC 7812: 13 digitos."},
+    {"id": "limite_19",        "valor": "4111111111111111110", "digitos": 19, "luhn_valido": true, "debe_detectarse": true, "marcador": "EXP02-PAN-G2", "nota": "Limite superior de la norma: 19 digitos."}
+  ],
+
+  "invalidos_luhn": [
+    {"id": "visa_16_check_malo",   "valor": "4111111111111112", "digitos": 16, "luhn_valido": false, "debe_detectarse": false, "nota": "Ultimo digito alterado. Longitud de PAN pero Luhn invalido: es el caso B del control CONF-99."},
+    {"id": "mc_16_check_malo",     "valor": "5555555555554445", "digitos": 16, "luhn_valido": false, "debe_detectarse": false, "nota": "Mismo patron sobre un rango 5xxx."},
+    {"id": "amex_15_check_malo",   "valor": "378282246310006",  "digitos": 15, "luhn_valido": false, "debe_detectarse": false, "nota": "15 digitos con digito de control incorrecto."},
+    {"id": "secuencia_16",         "valor": "1234567890123456", "digitos": 16, "luhn_valido": false, "debe_detectarse": false, "nota": "Secuencia plausible a simple vista; Luhn la descarta."},
+    {"id": "diners_14_check_malo", "valor": "30569309025905",   "digitos": 14, "luhn_valido": false, "debe_detectarse": false, "nota": "14 digitos con digito de control incorrecto."}
+  ],
+
+  "con_espacios": [
+    {"id": "visa_16_espacios",   "valor": "4111 1111 1111 1111", "digitos": 16, "luhn_valido": true, "debe_detectarse": true, "marcador": "EXP02-PAN-A1", "nota": "Mismo valor que visa_16 con agrupacion de 4. Caso C del control."},
+    {"id": "amex_15_espacios",   "valor": "3782 822463 10005",   "digitos": 15, "luhn_valido": true, "debe_detectarse": true, "marcador": "EXP02-PAN-C1", "nota": "Agrupacion 4-6-5, la habitual en 15 digitos."},
+    {"id": "mc_16_espacios_malo","valor": "5555 5555 5555 4445", "digitos": 16, "luhn_valido": false, "debe_detectarse": false, "nota": "Con espacios pero Luhn invalido: los separadores no deben relajar la validacion."}
+  ],
+
+  "con_guiones": [
+    {"id": "visa_16_guiones",    "valor": "4111-1111-1111-1111", "digitos": 16, "luhn_valido": true, "debe_detectarse": true, "marcador": "EXP02-PAN-A1", "nota": "Mismo valor que visa_16 con guiones. Caso D del control."},
+    {"id": "mc_16_guiones",      "valor": "5105-1051-0510-5100", "digitos": 16, "luhn_valido": true, "debe_detectarse": true, "marcador": "EXP02-PAN-B2", "nota": "Segundo valor con guiones."},
+    {"id": "visa_16_mixto",      "valor": "4111-1111 1111-1111", "digitos": 16, "luhn_valido": true, "debe_detectarse": true, "marcador": "EXP02-PAN-A1", "nota": "Separadores mezclados. Se exige deteccion: perder un PAN por un formato raro seria un falso negativo."}
+  ],
+
+  "fuera_de_rango": [
+    {"id": "corto_12",  "valor": "123456789015",         "digitos": 12, "luhn_valido": true, "debe_detectarse": false, "nota": "Luhn valido pero 12 digitos: por debajo del minimo de la norma."},
+    {"id": "largo_20",  "valor": "41111111111111111115", "digitos": 20, "luhn_valido": true, "debe_detectarse": false, "nota": "Luhn valido pero 20 digitos: por encima del maximo. Ademas verifica que el detector no recorte 19 digitos de una cadena mas larga."},
+    {"id": "trivial_16","valor": "0000000000000000",     "digitos": 16, "luhn_valido": true, "debe_detectarse": false, "nota": "Pasa Luhn por casualidad. Relleno habitual en capturas binarias; ningun BIN real lo produce."}
+  ],
+
+  "textos_sin_pan": [
+    {"id": "log_limpio",   "valor": "evento=pago_recibido corr=8f2a1c monto=150000 moneda=COP estado=aprobado", "debe_detectarse": false, "nota": "Log tipico ya tokenizado. Caso E del control."},
+    {"id": "solo_token",   "valor": "evento=persistido token=tok_7f3a9b2c1d4e5f60 ultimos4=1111",               "debe_detectarse": false, "nota": "Lo que si deberia verse tras la tokenizacion."},
+    {"id": "identificadores", "valor": "orden 2024-11-03 factura 00123 telefono 3001234567 nit 900123456-7",   "debe_detectarse": false, "nota": "Numeros de negocio y fechas: no deben confundirse con un PAN."},
+    {"id": "texto_plano",  "valor": "Solventa - MISW4202 - experimento de confidencialidad e integridad",      "debe_detectarse": false, "nota": "Texto sin digitos relevantes."}
+  ]
+}
