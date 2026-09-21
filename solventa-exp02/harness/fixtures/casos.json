@@ -1,0 +1,189 @@
+{
+  "_proposito": "Catalogo formal de los casos de EXP-02. Declara QUE se va a evaluar, no COMO. Los endpoints, topics, esquemas, tablas y puertos concretos NO se declaran aqui: dependen de contratos que todavia no se acuerdan con Donaldo, Oscar y Hernan, y se resolveran en contratos.py cuando existan.",
+  "_esquema": {
+    "id": "identificador estable del caso",
+    "criterio": "C1 | C2 | C3 | C4 | habilitante",
+    "descripcion": "que hace el caso",
+    "tipo": "prueba (mide el criterio) | control (valida el instrumento; no cuenta en el porcentaje)",
+    "resultado_esperado": "comportamiento del sistema que hace que el caso de PASS",
+    "responsable": "integrante dueno del componente que el caso observa",
+    "dependencia": "que hace falta acordar o tener disponible para poder ejecutarlo",
+    "artefactos_esperados": "evidencia que el caso debe producir"
+  },
+  "_criterios": {
+    "C1": "100% de las capturas evaluadas sin PAN en texto claro",
+    "C2": "0 persistencias del PAN en MS Pagos",
+    "C3": "100% de mensajes JWS validos aceptados",
+    "C4": "100% de mensajes JWS alterados rechazados antes de aplicar cambios de estado",
+    "habilitante": "No es un criterio oficial. Verifica una precondicion del experimento; se reporta aparte y no entra en ningun porcentaje."
+  },
+  "_nota_controles": "Un control no mide el sistema: demuestra que el instrumento funciona. No suma al numerador ni al denominador de su criterio, pero si falla invalida ese criterio completo. CONF-99 protege C1; PERS-03 protege C2.",
+
+  "casos": [
+    {
+      "id": "MTLS-01",
+      "criterio": "habilitante",
+      "tipo": "prueba",
+      "descripcion": "Intentar una conexion al servicio expuesto sin presentar certificado de cliente.",
+      "resultado_esperado": "La conexion es rechazada durante el handshake; no se llega a procesar ninguna peticion.",
+      "responsable": "Donaldo",
+      "dependencia": "Topologia con mTLS activo y un punto de entrada alcanzable desde el arnes. Pendiente de acuerdo.",
+      "artefactos_esperados": ["1_mtls/mtls-01_handshake.json"]
+    },
+    {
+      "id": "MTLS-02",
+      "criterio": "habilitante",
+      "tipo": "prueba",
+      "descripcion": "Intentar una conexion presentando un certificado de cliente firmado por una CA distinta de la del experimento.",
+      "resultado_esperado": "La conexion es rechazada por cadena de confianza invalida.",
+      "responsable": "Donaldo",
+      "dependencia": "Par de certificados intencionalmente no confiable, provisto como material de prueba. Pendiente de acuerdo.",
+      "artefactos_esperados": ["1_mtls/mtls-02_handshake.json"]
+    },
+    {
+      "id": "MTLS-03",
+      "criterio": "habilitante",
+      "tipo": "prueba",
+      "descripcion": "Conectar presentando el certificado de cliente legitimo del arnes.",
+      "resultado_esperado": "El handshake se completa y la peticion es atendida. Sin este caso, un rechazo en MTLS-01 y MTLS-02 no probaria nada: un servicio caido tambien rechaza todo.",
+      "responsable": "Donaldo",
+      "dependencia": "Par de certificados del arnes emitido por la CA del experimento. Pendiente de acuerdo.",
+      "artefactos_esperados": ["1_mtls/mtls-03_handshake.json"]
+    },
+
+    {
+      "id": "CONF-01",
+      "criterio": "C1",
+      "tipo": "prueba",
+      "descripcion": "Enviar una transaccion con un PAN sintetico e inspeccionar la respuesta que devuelve MS Pagos.",
+      "resultado_esperado": "La respuesta no contiene el PAN en texto claro y si contiene el identificador sustituto.",
+      "responsable": "Oscar",
+      "dependencia": "Contrato de la operacion de pago y formato del token. Pendiente de acuerdo.",
+      "artefactos_esperados": ["2_pan_transito/conf-01_respuesta.json"]
+    },
+    {
+      "id": "CONF-02",
+      "criterio": "C1",
+      "tipo": "prueba",
+      "descripcion": "Inspeccionar el trafico del segmento posterior a la tokenizacion en busca de PAN en texto claro.",
+      "resultado_esperado": "Cero hallazgos de PAN en la captura evaluada.",
+      "responsable": "Donaldo (punto de captura) y Oscar (tokenizacion)",
+      "dependencia": "Definicion del punto de captura del segmento interno. Pendiente de acuerdo: es la dependencia mas critica de C1.",
+      "artefactos_esperados": ["2_pan_transito/conf-02_resumen.json", "2_pan_transito/capturas/conf-02.pcap"]
+    },
+    {
+      "id": "CONF-03",
+      "criterio": "C1",
+      "tipo": "prueba",
+      "descripcion": "Inspeccionar el trafico del segmento protegido con mTLS en busca de PAN en texto claro.",
+      "resultado_esperado": "Cero hallazgos de PAN. Este caso evidencia cifrado en transito; por si solo NO demuestra tokenizacion, y por eso se reporta separado de CONF-02.",
+      "responsable": "Donaldo",
+      "dependencia": "Definicion del punto de captura del segmento con mTLS. Pendiente de acuerdo.",
+      "artefactos_esperados": ["2_pan_transito/conf-03_resumen.json", "2_pan_transito/capturas/conf-03.pcap"]
+    },
+    {
+      "id": "CONF-04",
+      "criterio": "C1",
+      "tipo": "prueba",
+      "descripcion": "Inspeccionar la salida de log de los servicios involucrados en busca de PAN en texto claro.",
+      "resultado_esperado": "Cero hallazgos de PAN en los logs evaluados.",
+      "responsable": "Oscar y Hernan (contenido), Donaldo (acceso a los logs)",
+      "dependencia": "Forma estable de obtener los logs de los servicios. Pendiente de acuerdo.",
+      "artefactos_esperados": ["2_pan_transito/conf-04_resumen.json"]
+    },
+    {
+      "id": "CONF-99",
+      "criterio": "C1",
+      "tipo": "control",
+      "descripcion": "Control positivo del detector de PAN: se le presenta material controlado con y sin PAN sintetico y se verifica que distingue ambos casos.",
+      "resultado_esperado": "El detector encuentra los PAN presentes, descarta los numeros que no lo son y no expone el valor completo en su resultado.",
+      "responsable": "Tibisay",
+      "dependencia": "Ninguna. Corre sin infraestructura y sin componentes de terceros.",
+      "artefactos_esperados": ["2_pan_transito/conf-99_control.json"],
+      "nota": "Si este control falla, C1 queda INVALIDADO aunque CONF-01 a CONF-04 reporten cero hallazgos: un detector averiado no encuentra nada nunca."
+    },
+
+    {
+      "id": "PERS-01",
+      "criterio": "C2",
+      "tipo": "prueba",
+      "descripcion": "Tras ejecutar transacciones con PAN sinteticos, inspeccionar el almacen de MS Pagos en busca del PAN.",
+      "resultado_esperado": "Cero persistencias del PAN.",
+      "responsable": "Oscar",
+      "dependencia": "Acceso de solo lectura al almacen y ubicacion de los datos de la transaccion. Pendiente de acuerdo: sin esto C2 no es demostrable.",
+      "artefactos_esperados": ["3_pan_persistido/pers-01_resumen.json"]
+    },
+    {
+      "id": "PERS-02",
+      "criterio": "C2",
+      "tipo": "prueba",
+      "descripcion": "Verificar que el registro persistido de la transaccion guarda el identificador sustituto en lugar del PAN.",
+      "resultado_esperado": "El registro contiene el sustituto y ningun campo contiene el PAN.",
+      "responsable": "Oscar",
+      "dependencia": "Formato del token y ubicacion del registro. Pendiente de acuerdo.",
+      "artefactos_esperados": ["3_pan_persistido/pers-02_registro.json"]
+    },
+    {
+      "id": "PERS-03",
+      "criterio": "C2",
+      "tipo": "control",
+      "descripcion": "Control positivo de la inspeccion del almacen: confirmar que la transaccion de prueba si quedo registrada.",
+      "resultado_esperado": "El registro de la transaccion existe y es legible por el arnes.",
+      "responsable": "Tibisay (inspeccion), Oscar (almacen)",
+      "dependencia": "El mismo acceso de solo lectura que PERS-01.",
+      "artefactos_esperados": ["3_pan_persistido/pers-03_control.json"],
+      "nota": "Si este control falla, C2 queda INVALIDADO: un sistema que no guardo nada, o un inspector que mira donde no es, tambien reporta cero PAN persistidos."
+    },
+
+    {
+      "id": "INTEG-01",
+      "criterio": "C3",
+      "tipo": "prueba",
+      "descripcion": "Emitir un evento correctamente firmado y observar su tratamiento por el consumidor.",
+      "resultado_esperado": "El evento es aceptado y procesado, y queda registrado como aceptado en Auditoria.",
+      "responsable": "Hernan",
+      "dependencia": "Esquema del evento, forma de la firma, manera de obtener material de firma confiable y forma de consultar Auditoria. Pendiente de acuerdo.",
+      "artefactos_esperados": ["4_jws_valido/integ-01_evento.json", "4_jws_valido/integ-01_auditoria.json"]
+    },
+    {
+      "id": "INTEG-02",
+      "criterio": "C4",
+      "tipo": "prueba",
+      "descripcion": "Emitir un evento cuyo payload fue alterado despues de firmarse, y comparar el estado de negocio antes y despues.",
+      "resultado_esperado": "El evento es rechazado y el estado de negocio no cambia. La comparacion antes/despues es lo que sustenta la palabra 'antes' del criterio: un codigo de rechazo por si solo no lo demuestra.",
+      "responsable": "Hernan",
+      "dependencia": "Esquema del evento y que estado de negocio observar para evidenciar la ausencia de cambio. Pendiente de acuerdo.",
+      "artefactos_esperados": ["5_jws_alterado/integ-02_mutacion.json", "5_jws_alterado/integ-02_estado_antes.json", "5_jws_alterado/integ-02_estado_despues.json", "5_jws_alterado/integ-02_auditoria.json"]
+    },
+    {
+      "id": "INTEG-03",
+      "criterio": "C4",
+      "tipo": "prueba",
+      "descripcion": "Emitir un evento firmado con material de firma que el verificador no debe considerar confiable.",
+      "resultado_esperado": "El evento es rechazado y el estado de negocio no cambia.",
+      "responsable": "Hernan",
+      "dependencia": "Como el arnes puede producir una firma no confiable sin comprometer el material legitimo. Pendiente de acuerdo.",
+      "artefactos_esperados": ["5_jws_alterado/integ-03_mutacion.json", "5_jws_alterado/integ-03_auditoria.json"]
+    },
+    {
+      "id": "INTEG-04",
+      "criterio": "C4",
+      "tipo": "prueba",
+      "descripcion": "Emitir un evento cuya firma fue suprimida o truncada.",
+      "resultado_esperado": "El evento es rechazado y el estado de negocio no cambia.",
+      "responsable": "Hernan",
+      "dependencia": "Esquema del evento y ubicacion de la firma. Pendiente de acuerdo.",
+      "artefactos_esperados": ["5_jws_alterado/integ-04_mutacion.json", "5_jws_alterado/integ-04_auditoria.json"]
+    },
+    {
+      "id": "INTEG-05",
+      "criterio": "C4",
+      "tipo": "prueba",
+      "descripcion": "Reutilizar una firma legitima sobre un payload distinto del que fue firmado.",
+      "resultado_esperado": "El evento es rechazado y el estado de negocio no cambia.",
+      "responsable": "Hernan",
+      "dependencia": "Esquema del evento y forma de la firma. Pendiente de acuerdo.",
+      "artefactos_esperados": ["5_jws_alterado/integ-05_mutacion.json", "5_jws_alterado/integ-05_auditoria.json"]
+    }
+  ]
+}
