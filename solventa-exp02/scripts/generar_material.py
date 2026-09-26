@@ -21,7 +21,7 @@ from pathlib import Path
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric import ec, rsa
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
 
 # Identidad -> nombres DNS que puede presentar como servidor.
@@ -105,6 +105,16 @@ def generar_secretos(directorio):
     # Fernet exige 32 bytes en base64 url-safe.
     (directorio / "llave_cifrado").write_bytes(base64.urlsafe_b64encode(os.urandom(32)))
     (directorio / "llave_hmac").write_bytes(base64.urlsafe_b64encode(os.urandom(32)))
+    # Par JWS de desarrollo. El productor monta la privada y el consumidor
+    # unicamente la publica. El segundo par permite INTEG-03.
+    for nombre in ("consentimiento", "no_confiable_jws"):
+        llave = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        (directorio / (nombre + ".key")).write_bytes(llave.private_bytes(
+            serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption()))
+        (directorio / (nombre + ".pub")).write_bytes(llave.public_key().public_bytes(
+            serialization.Encoding.PEM,
+            serialization.PublicFormat.SubjectPublicKeyInfo))
     for f in directorio.iterdir():
         os.chmod(f, 0o644)
 

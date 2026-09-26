@@ -47,7 +47,7 @@ la integridad (firma JWS).
 | Donaldo | Docker Compose general, CA y certificados mTLS, Kafka | — | pendiente |
 | Óscar | MS Pagos + Servicio de Tokenización (`pagos/`, `tokenizacion/`, `comun/`) | `feature/exp02-oscar` | implementado y verificado (ver Resultados); falta integrar Auditoría y el compose general |
 | Tibisay | Arnés PASS/FAIL, captura y evidencia (`harness/`) | `feature/exp02-tibisay` | catálogo de casos, detector de PAN y consolidación listos; faltan `contratos.py` y los casos ejecutables |
-| Hernán | Firma y verificación JWS, productor/consumidor de Suscripción/Consentimiento, Auditoría | — | pendiente |
+| Hernán | Firma y verificación JWS, productor/consumidor de Suscripción/Consentimiento, Auditoría | `feature/exp02-hernan` | implementado; pendiente integración del transporte Kafka de Donaldo |
 
 ## Resultados por componente
 
@@ -77,6 +77,22 @@ Hallazgos corregidos en el camino:
 - Los ids aleatorios podían contener 13 o más dígitos seguidos, lo que daría falsos positivos del detector del arnés (ahora se descartan).
 - Escanear el binario de SQLite con el patrón de PAN da falsos positivos. Para bytes crudos se busca el PAN literal; el patrón solo se aplica a texto.
 
+### Hernán — JWS, Suscripción y Auditoría (2026-09-26)
+
+**Suite completa: 40/40 PASS.** La corrida real de integridad reporta
+`PASS INTEG-01` a `PASS INTEG-05`.
+
+| Caso | Evidencia |
+|---|---|
+| INTEG-01 | Un JWS RS256 confiable activa la suscripción y genera Auditoría ACEPTADO |
+| INTEG-02 | Alterar el payload invalida la firma y conserva el estado anterior |
+| INTEG-03 | Un `kid` no confiable se rechaza sin aplicar cambios |
+| INTEG-04 | Una firma ausente o truncada se rechaza sin aplicar cambios |
+| INTEG-05 | Una firma válida no puede reutilizarse con otro payload/eventId |
+
+Auditoría conserva registros append-only enlazados mediante `hashAnterior` y
+`hashIntegridad`. El contrato completo está en [INTEGRIDAD.md](INTEGRIDAD.md).
+
 ## Estructura de `solventa-exp02/`
 ```
 comun/        pan.py (misma regla de detección que el arnés), tls.py (mTLS TLS 1.3),
@@ -89,6 +105,9 @@ scripts/      generar_material.py (certificados y llaves de desarrollo),
 bd/           pagos_init.sql (usuario harness_lectura, solo lectura)
 harness/      arnés de Tibisay (en su rama)
 docker-compose.pagos.yml   tramo de confidencialidad, a integrar en el compose general
+consentimiento/ productor de eventos firmados; suscripcion/ consumidor y estado observable
+auditoria/      bitácora append-only con hash encadenado
+docker-compose.integridad.yml   tramo reproducible de C3/C4
 ```
 
 ## Contratos acordados o propuestos
@@ -100,11 +119,17 @@ docker-compose.pagos.yml   tramo de confidencialidad, a integrar en el compose g
   publica al host. No existe destokenización.
 - **Certificados**: `certs/{ca,ms-pagos,tokenizador,harness,no_confiable}.{crt,key}`,
   nombres alineados con `harness/config.py`.
-- **Auditoría**: *pendiente (Hernán)*. MS Pagos hoy emite
-  `evento=auditoria accion=PAGO_REGISTRADO entidad=Pago entidadId=... actorId=ms-pagos`
-  en el log, con los campos de `RegistroAuditoria` (VC-004): entidadAfectada, entidadId,
-  accion, actorId, timestamp, hashIntegridad.
-- **Kafka**: *pendiente (Donaldo/Hernán)*. El arnés asume `solventa.pagos.eventos` y `solventa.auditoria`.
+- **JWS**: serialización compacta, `RS256`, `kid=consentimiento-v1`. El sobre es
+  `{eventId, marcador, jws}` y el `eventId` externo debe coincidir con el firmado.
+- **Suscripción**: `POST /eventos` y `GET /suscripciones/<id>` en el host `:5103`.
+  Solo un evento válido cambia `PENDIENTE` a `ACTIVA`; un rechazo devuelve 422.
+- **Auditoría**: `POST /registros` y `GET /registros?eventId=|marcador=` en `:5104`.
+  Los registros se encadenan mediante `hashAnterior` y `hashIntegridad`. MS Pagos
+  usa este servicio si existe `AUDITORIA_URL` y conserva logs como respaldo.
+- **Transporte**: `docker-compose.integridad.yml` usa un adaptador HTTP interno
+  determinista. Kafka sigue pendiente de Donaldo; debe entregar el mismo sobre
+  al procesador sin modificar el contrato JWS. Tópicos propuestos:
+  `solventa.pagos.eventos` y `solventa.auditoria`.
 
 ## Vistas de arquitectura relevantes
 - **VC-004 Información**: `Pago{monto, tokenTarjeta (el PAN NO se almacena), fechaPago}`;
@@ -123,6 +148,11 @@ docker compose -f docker-compose.pagos.yml run --rm pruebas    # pytest
 docker compose -f docker-compose.pagos.yml up -d --build
 docker compose -f docker-compose.pagos.yml run --rm verificacion   # extremo a extremo, con el stack arriba
 docker compose -f docker-compose.pagos.yml logs --no-color | docker compose -f docker-compose.pagos.yml run --rm -T verificacion python scripts/verificar_confidencialidad.py --logs
+
+docker compose -f docker-compose.integridad.yml run --rm material
+docker compose -f docker-compose.integridad.yml run --rm pruebas
+docker compose -f docker-compose.integridad.yml up -d --build
+docker compose -f docker-compose.integridad.yml run --rm verificacion-integridad
 ```
 Todo va en el proyecto de Compose `name: arquitecturas-agiles`, con imágenes
 `arquitecturas-agiles/<servicio>:exp02`. No uses `docker run` sueltos: agrega un

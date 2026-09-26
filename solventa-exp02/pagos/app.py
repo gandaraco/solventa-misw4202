@@ -12,6 +12,7 @@ from decimal import Decimal, InvalidOperation
 from flask import Flask, jsonify, request
 
 from comun import registro, tls
+from comun.auditoria import AuditoriaLog, AuditoriaNoDisponible, ClienteAuditoria
 from comun.ids import nuevo_id
 from pagos.almacen import Almacen
 from pagos.tokenizador import ClienteTokenizador, PanInvalido, TokenizadorNoDisponible
@@ -80,9 +81,15 @@ def _cliente_desde_entorno():
     )
 
 
-def crear_app(almacen=None, tokenizador=None):
+def _auditoria_desde_entorno():
+    url = os.getenv("AUDITORIA_URL")
+    return ClienteAuditoria(url) if url else AuditoriaLog(log)
+
+
+def crear_app(almacen=None, tokenizador=None, auditoria=None):
     almacen = almacen or Almacen(os.getenv("BD_URL", "sqlite:///pagos.db"))
     tokenizador = tokenizador or _cliente_desde_entorno()
+    auditoria = auditoria or _auditoria_desde_entorno()
     app = Flask(__name__)
 
     @app.post("/pagos")
@@ -121,10 +128,18 @@ def crear_app(almacen=None, tokenizador=None):
             "evento=pago_registrado pago=%s token=%s concepto=%s monto=%s moneda=%s",
             fila["pago_id"], token, fila["concepto"], fila["monto"], fila["moneda"],
         )
-        # Contrato con Auditoria (Hernan) pendiente: por ahora se deja el
-        # registro con los campos de RegistroAuditoria (VC-004) en el log.
-        log.info("evento=auditoria accion=PAGO_REGISTRADO entidad=Pago entidadId=%s actorId=ms-pagos",
-                 fila["pago_id"])
+        try:
+            auditoria.registrar({
+                "eventId": nuevo_id("evt"), "marcador": fila["referencia"],
+                "accion": "PAGO_REGISTRADO", "entidadAfectada": "Pago",
+                "entidadId": fila["pago_id"], "actorId": "ms-pagos",
+                "resultado": "ACEPTADO",
+            })
+        except AuditoriaNoDisponible as exc:
+            # El pago ya quedo confirmado. La falla de auditoria se hace visible
+            # para reconciliacion sin repetir ni revertir la transaccion.
+            log.error("evento=auditoria_no_disponible pago=%s causa=%s",
+                      fila["pago_id"], exc)
         return jsonify(_a_json(fila)), 201
 
     @app.get("/pagos/<pago_id>")
