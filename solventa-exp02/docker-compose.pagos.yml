@@ -1,0 +1,122 @@
+# Tramo de confidencialidad de EXP-02: MS Pagos + Servicio de Tokenizacion.
+#
+# Pensado para integrarse en el docker-compose general que arma Donaldo; se
+# puede levantar solo para desarrollar y probar este tramo:
+#
+#     docker compose -f docker-compose.pagos.yml up -d --build
+#
+# Requiere certs/ y secretos/ (ver scripts/generar_material.py).
+#
+# Redes: emulan el aislamiento de ns-pagos-pci de la vista de despliegue (VC-005).
+#   red-borde        ms-pagos es el unico punto alcanzable desde el host (5101).
+#   red-pci          ms-pagos <-> tokenizador. internal: sin salida ni puertos al host.
+#   red-datos-pci    tokenizador <-> su base de datos. internal.
+#   red-datos-pagos  ms-pagos <-> su base de datos; publicada solo en 127.0.0.1
+#                    para que el arnes verifique C2 con un usuario de solo lectura.
+
+# Todos los contenedores, redes e imagenes quedan agrupados en este proyecto
+# (en Docker Desktop aparecen juntos, no sueltos).
+name: arquitecturas-agiles
+
+x-tls-comun: &tls
+  TLS_CA: /certs/ca.crt
+  LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+
+services:
+  bd-tokenizacion:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: boveda
+      POSTGRES_USER: boveda
+      POSTGRES_PASSWORD: boveda_dev   # solo desarrollo
+    networks: [red-datos-pci]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "boveda"]
+      interval: 3s
+      retries: 20
+
+  tokenizador:
+    build: {context: ., dockerfile: tokenizacion/Dockerfile}
+    image: arquitecturas-agiles/tokenizador:exp02
+    environment:
+      <<: *tls
+      SERVICE_ID: tokenizador
+      TLS_CERT: /certs/tokenizador.crt
+      TLS_CLAVE: /certs/tokenizador.key
+      BD_URL: postgresql+psycopg://boveda:boveda_dev@bd-tokenizacion/boveda
+      LLAVE_CIFRADO_ARCHIVO: /secretos/llave_cifrado
+      LLAVE_HMAC_ARCHIVO: /secretos/llave_hmac
+    volumes:
+      - ./certs:/certs:ro
+      - ./secretos:/secretos:ro
+    networks: [red-pci, red-datos-pci]
+    depends_on:
+      bd-tokenizacion: {condition: service_healthy}
+
+  bd-pagos:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: pagos
+      POSTGRES_USER: pagos
+      POSTGRES_PASSWORD: pagos_dev   # solo desarrollo
+    volumes:
+      - ./bd/pagos_init.sql:/docker-entrypoint-initdb.d/pagos_init.sql:ro
+    ports: ["127.0.0.1:5132:5432"]
+    networks: [red-datos-pagos]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "pagos"]
+      interval: 3s
+      retries: 20
+
+  ms-pagos:
+    build: {context: ., dockerfile: pagos/Dockerfile}
+    image: arquitecturas-agiles/ms-pagos:exp02
+    environment:
+      <<: *tls
+      SERVICE_ID: ms-pagos
+      TLS_CERT: /certs/ms-pagos.crt
+      TLS_CLAVE: /certs/ms-pagos.key
+      BD_URL: postgresql+psycopg://pagos:pagos_dev@bd-pagos/pagos
+      TOKENIZADOR_URL: https://tokenizador:8443
+    volumes:
+      - ./certs:/certs:ro
+    ports: ["5101:8443"]
+    networks: [red-borde, red-pci, red-datos-pagos]
+    depends_on:
+      bd-pagos: {condition: service_healthy}
+      tokenizador: {condition: service_started}
+
+  # --- Herramientas (perfil "herramientas": no arrancan con `up`) -----------
+  # Reemplazan los `docker run` sueltos, para no depender de Python local.
+  #   docker compose -f docker-compose.pagos.yml run --rm material
+  #   docker compose -f docker-compose.pagos.yml run --rm pruebas
+  material:
+    build: {context: ., dockerfile: pruebas/Dockerfile}
+    image: arquitecturas-agiles/herramientas:exp02
+    profiles: [herramientas]
+    volumes: [".:/w"]
+    command: python scripts/generar_material.py
+    network_mode: none
+
+  pruebas:
+    build: {context: ., dockerfile: pruebas/Dockerfile}
+    image: arquitecturas-agiles/herramientas:exp02
+    profiles: [herramientas]
+    volumes: [".:/w"]
+    command: python -m pytest pruebas -q -p no:cacheprovider
+    network_mode: none
+
+  # Verificacion de extremo a extremo contra el stack levantado. Ve lo mismo que
+  # veria el arnes: ms-pagos por red-borde y la BD con el usuario de solo lectura.
+  verificacion:
+    image: arquitecturas-agiles/herramientas:exp02
+    profiles: [herramientas]
+    volumes: [".:/w"]
+    command: python scripts/verificar_confidencialidad.py
+    networks: [red-borde, red-datos-pagos]
+
+networks:
+  red-borde: {}
+  red-pci: {internal: true}
+  red-datos-pci: {internal: true}
+  red-datos-pagos: {}

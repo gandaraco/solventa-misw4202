@@ -1,0 +1,7 @@
+# Material criptografico de desarrollo (scripts/generar_material.py). Nunca se versiona.
+certs/
+secretos/
+# Bases SQLite locales de desarrollo.
+*.db
+__pycache__/
+.pytest_cache/
