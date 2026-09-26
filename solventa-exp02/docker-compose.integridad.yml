@@ -1,0 +1,71 @@
+# Tramo de integridad de EXP-02. El adaptador HTTP interno hace determinista la
+# corrida de INTEG-01..05; Donaldo puede reemplazarlo por Kafka sin cambiar el
+# contrato JWS ni el procesador de MS Suscripcion.
+name: arquitecturas-agiles
+
+services:
+  auditoria:
+    build: {context: ., dockerfile: auditoria/Dockerfile}
+    image: arquitecturas-agiles/auditoria:exp02
+    environment:
+      SERVICE_ID: auditoria
+      BD_URL: sqlite:////tmp/auditoria.db
+    ports: ["5104:8080"]
+    networks: [red-eventos]
+
+  ms-suscripcion:
+    build: {context: ., dockerfile: suscripcion/Dockerfile}
+    image: arquitecturas-agiles/ms-suscripcion:exp02
+    environment:
+      SERVICE_ID: ms-suscripcion
+      BD_URL: sqlite:////tmp/suscripcion.db
+      JWS_PUBLICA_ARCHIVO: /secretos/consentimiento.pub
+      JWS_KID: consentimiento-v1
+      AUDITORIA_URL: http://auditoria:8080
+    volumes: ["./secretos:/secretos:ro"]
+    ports: ["5103:8080"]
+    networks: [red-eventos]
+    depends_on: [auditoria]
+
+  ms-consentimiento:
+    build: {context: ., dockerfile: consentimiento/Dockerfile}
+    image: arquitecturas-agiles/ms-consentimiento:exp02
+    environment:
+      SERVICE_ID: ms-consentimiento
+      JWS_PRIVADA_ARCHIVO: /secretos/consentimiento.key
+      JWS_KID: consentimiento-v1
+      SUSCRIPCION_URL: http://ms-suscripcion:8080
+    volumes: ["./secretos:/secretos:ro"]
+    ports: ["5102:8080"]
+    networks: [red-eventos]
+    depends_on: [ms-suscripcion]
+
+  material:
+    build: {context: ., dockerfile: pruebas/Dockerfile}
+    image: arquitecturas-agiles/herramientas:exp02
+    profiles: [herramientas]
+    volumes: [".:/w"]
+    command: python scripts/generar_material.py
+    network_mode: none
+
+  pruebas:
+    image: arquitecturas-agiles/herramientas:exp02
+    profiles: [herramientas]
+    volumes: [".:/w"]
+    command: python -m pytest pruebas -q -p no:cacheprovider
+    network_mode: none
+
+  verificacion-integridad:
+    image: arquitecturas-agiles/herramientas:exp02
+    profiles: [herramientas]
+    volumes:
+      - ".:/w"
+      - "./secretos:/secretos:ro"
+    environment:
+      SUSCRIPCION_URL: http://ms-suscripcion:8080
+      AUDITORIA_URL: http://auditoria:8080
+    command: python scripts/verificar_integridad.py
+    networks: [red-eventos]
+
+networks:
+  red-eventos: {internal: true}
