@@ -15,3 +15,5 @@ curso MISW4202 Arquitecturas Ágiles de Software, Universidad de los Andes.
 - `solventa-exp01/`: disponibilidad.
 - `solventa-exp02/`: seguridad. El contrato de integridad JWS y Auditoría está en
   [`solventa-exp02/INTEGRIDAD.md`](solventa-exp02/INTEGRIDAD.md).
+  La infraestructura (compose general, CA y mTLS, Kafka, API Gateway) y la corrida
+  completa están en [`solventa-exp02/INFRAESTRUCTURA.md`](solventa-exp02/INFRAESTRUCTURA.md).

@@ -18,6 +18,12 @@ AUDITORIA = os.getenv("AUDITORIA_URL", "http://auditoria:8080")
 PRIVADA = Path(os.getenv("JWS_PRIVADA_ARCHIVO", "/secretos/consentimiento.key")).read_bytes()
 NO_CONFIABLE = Path(os.getenv("JWS_NO_CONFIABLE_ARCHIVO", "/secretos/no_confiable_jws.key")).read_bytes()
 
+# En el compose general los servicios exigen mTLS; en docker-compose.integridad.yml no.
+sesion = requests.Session()
+if os.getenv("CERT_CLIENTE"):
+    sesion.cert = (os.environ["CERT_CLIENTE"], os.environ["CLAVE_CLIENTE"])
+    sesion.verify = os.environ["CA_BUNDLE"]
+
 
 def payload(event_id, suscripcion_id):
     return {"eventId": event_id, "tipo": "CONSENTIMIENTO_OTORGADO",
@@ -26,11 +32,11 @@ def payload(event_id, suscripcion_id):
 
 
 def estado(suscripcion_id):
-    return requests.get(SUSCRIPCION + "/suscripciones/" + suscripcion_id, timeout=3).json()
+    return sesion.get(SUSCRIPCION + "/suscripciones/" + suscripcion_id, timeout=3).json()
 
 
 def enviar(event_id, token, marcador):
-    return requests.post(SUSCRIPCION + "/eventos", json={
+    return sesion.post(SUSCRIPCION + "/eventos", json={
         "eventId": event_id, "marcador": marcador, "jws": token,
     }, timeout=3)
 
@@ -79,7 +85,7 @@ def main():
     casos.append(("INTEG-05", r.status_code == 422 and estado(sus) == antes))
 
     for caso, ok in casos:
-        registros = requests.get(AUDITORIA + "/registros?marcador=" + caso,
+        registros = sesion.get(AUDITORIA + "/registros?marcador=" + caso,
                                  timeout=3).json()
         ok = ok and len(registros) == 1
         print("%s %s" % ("PASS" if ok else "FAIL", caso))

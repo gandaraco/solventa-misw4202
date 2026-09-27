@@ -1,7 +1,8 @@
-# Dependencias de MS Pagos y del Servicio de Tokenizacion (misma imagen base).
+# Dependencias comunes de los servicios Flask de EXP-02 (misma imagen base).
 flask==3.0.3
 gunicorn==23.0.0
 sqlalchemy==2.0.36
 psycopg[binary]==3.2.3
 cryptography==43.0.3
 requests==2.32.3
+confluent-kafka==2.6.1

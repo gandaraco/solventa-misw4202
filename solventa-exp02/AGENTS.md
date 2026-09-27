@@ -44,10 +44,10 @@ la integridad (firma JWS).
 ## Reparto y estado
 | Integrante | Componente | Rama | Estado |
 |---|---|---|---|
-| Donaldo | Docker Compose general, CA y certificados mTLS, Kafka | — | pendiente |
-| Óscar | MS Pagos + Servicio de Tokenización (`pagos/`, `tokenizacion/`, `comun/`) | `feature/exp02-oscar` | implementado y verificado (ver Resultados); falta integrar Auditoría y el compose general |
+| Donaldo | Docker Compose general, CA y certificados mTLS, Kafka, API Gateway + Autorizador, captura (`docker-compose.yml`, `gateway/`, `autorizador/`, `kafka/`, `captura/`) | `feature/exp02-donaldo` | implementado y verificado sobre el stack integrado (ver Resultados y [INFRAESTRUCTURA.md](INFRAESTRUCTURA.md)) |
+| Óscar | MS Pagos + Servicio de Tokenización (`pagos/`, `tokenizacion/`, `comun/`) | `feature/exp02-oscar` | implementado y verificado (ver Resultados); integrado con Auditoría en el compose general |
 | Tibisay | Arnés PASS/FAIL, captura y evidencia (`harness/`) | `feature/exp02-tibisay` | catálogo de casos, detector de PAN y consolidación listos; faltan `contratos.py` y los casos ejecutables |
-| Hernán | Firma y verificación JWS, productor/consumidor de Suscripción/Consentimiento, Auditoría | `feature/exp02-hernan` | implementado; pendiente integración del transporte Kafka de Donaldo |
+| Hernán | Firma y verificación JWS, productor/consumidor de Suscripción/Consentimiento, Auditoría | `feature/exp02-hernan` | implementado e integrado con el transporte Kafka |
 
 ## Resultados por componente
 
@@ -93,13 +93,29 @@ Hallazgos corregidos en el camino:
 Auditoría conserva registros append-only enlazados mediante `hashAnterior` y
 `hashIntegridad`. El contrato completo está en [INTEGRIDAD.md](INTEGRIDAD.md).
 
+### Donaldo — Infraestructura e integración (2026-09-26, `docker-compose.yml` desde cero)
+
+**Pruebas: 92/92 PASS. Verificación de infraestructura (`bash scripts/experimento.sh`): 77/77 PASS.**
+Sobre el mismo stack integrado, la verificación de Óscar da 11/11 y la de Hernán
+INTEG-01 a INTEG-05 PASS.
+
+| Grupo | Evidencia |
+|---|---|
+| mTLS | Los 6 servicios y Kafka rechazan sin certificado, con otra CA, con TLS 1.2 y en claro; el certificado legítimo es atendido (control) |
+| Gateway + Autorizador | Sin token, llave ajena, `alg=none`, token robado con otro certificado válido, cliente no registrado y scope insuficiente → rechazados y auditados |
+| Flujo integrado | 8 pagos por gateway → ms-pagos → tokenizador con 0 PAN en respuestas y almacén; C3/C4 con el sobre JWS viajando por Kafka y un atacante que lo altera en el tópico |
+| Capturas y logs | 3 capturas con control positivo, 0 PAN en 2 186 paquetes mTLS; el segmento Postgres en claro solo lleva tokens; 1 469 líneas de log sin PAN |
+
+Hallazgo corregido: el access log de gunicorn escribía la ruta y un `GET /pagos/<PAN>`
+dejaba el PAN en el log; ahora se redacta en `comun/gunicorn_conf.py`.
+
 ## Estructura de `solventa-exp02/`
 ```
 comun/        pan.py (misma regla de detección que el arnés), tls.py (mTLS TLS 1.3),
               ids.py, registro.py, gunicorn_conf.py
 pagos/        MS Pagos: app.py, almacen.py, tokenizador.py (cliente mTLS), README.md
 tokenizacion/ Servicio de Tokenización: app.py, boveda.py
-pruebas/      pytest de pagos, tokenización y mTLS
+pruebas/      pytest de pagos, tokenización, mTLS, integridad, gateway, Kafka y certificados
 scripts/      generar_material.py (certificados y llaves de desarrollo),
               verificar_confidencialidad.py (verificación de extremo a extremo del tramo)
 bd/           pagos_init.sql (usuario harness_lectura, solo lectura)
@@ -108,6 +124,13 @@ docker-compose.pagos.yml   tramo de confidencialidad, a integrar en el compose g
 consentimiento/ productor de eventos firmados; suscripcion/ consumidor y estado observable
 auditoria/      bitácora append-only con hash encadenado
 docker-compose.integridad.yml   tramo reproducible de C3/C4
+docker-compose.yml   compose general: todo el flujo con mTLS, Kafka, gateway y captura
+gateway/        API Gateway (mTLS + JWT ligado al certificado, reenvío por mTLS)
+autorizador/    OAuth2 client credentials con autenticación mTLS; comun/jwt.py
+kafka/          server.properties del broker (TLS 1.3, certificado obligatorio); comun/kafka.py
+captura/        tcpdump para los puntos de captura (perfil captura)
+scripts/        verificar_infraestructura.py, experimento.sh (corrida completa), crear_topicos.py
+evidencias/     salida de las corridas (ignorada por Git)
 ```
 
 ## Contratos acordados o propuestos
@@ -117,8 +140,16 @@ docker-compose.integridad.yml   tramo reproducible de C3/C4
 - **Almacén de Pagos (C2)**: Postgres en `127.0.0.1:5132/pagos`, usuario `harness_lectura`.
 - **Tokenizador**: `POST /tokens` en `tokenizador:8443`, solo desde `red-pci`; no se
   publica al host. No existe destokenización.
-- **Certificados**: `certs/{ca,ms-pagos,tokenizador,harness,no_confiable}.{crt,key}`,
-  nombres alineados con `harness/config.py`.
+- **Certificados**: `certs/<identidad>.{crt,key}` para `ca`, `api-gateway`, `autorizador`,
+  `ms-pagos`, `tokenizador`, `ms-consentimiento`, `ms-suscripcion`, `auditoria`, `kafka`,
+  `harness`, `atacante` (CA válida, sin registro en el Autorizador) y `no_confiable`
+  (otra CA); además `certs/kafka.p12`. Nombres alineados con `harness/config.py`.
+- **API Gateway**: `:5100`, mTLS + `Authorization: Bearer <JWT>`. Rutas `POST|GET /pagos`,
+  `GET /pagos/<id>`, `POST /consentimientos`, `GET /suscripciones/<id>`. Cabecera opcional
+  `X-Marcador` para encontrar sus rechazos en Auditoría.
+- **Autorizador**: `POST /oauth/token` en `:5105` con `grant_type=client_credentials`; el
+  cliente se identifica con su certificado. El JWT (RS256, `kid=autorizador-v1`, 300 s)
+  queda ligado al certificado por `cnf.x5t#S256`.
 - **JWS**: serialización compacta, `RS256`, `kid=consentimiento-v1`. El sobre es
   `{eventId, marcador, jws}` y el `eventId` externo debe coincidir con el firmado.
 - **Suscripción**: `POST /eventos` y `GET /suscripciones/<id>` en el host `:5103`.
@@ -126,10 +157,11 @@ docker-compose.integridad.yml   tramo reproducible de C3/C4
 - **Auditoría**: `POST /registros` y `GET /registros?eventId=|marcador=` en `:5104`.
   Los registros se encadenan mediante `hashAnterior` y `hashIntegridad`. MS Pagos
   usa este servicio si existe `AUDITORIA_URL` y conserva logs como respaldo.
-- **Transporte**: `docker-compose.integridad.yml` usa un adaptador HTTP interno
-  determinista. Kafka sigue pendiente de Donaldo; debe entregar el mismo sobre
-  al procesador sin modificar el contrato JWS. Tópicos propuestos:
-  `solventa.pagos.eventos` y `solventa.auditoria`.
+- **Transporte**: en `docker-compose.yml` el sobre JWS viaja por Kafka (`kafka:9092`,
+  host `127.0.0.1:5194`, mTLS TLS 1.3) en el tópico `solventa.consentimiento.eventos`,
+  sin modificarse; MS Suscripción lo entrega al mismo `procesar_sobre` que `POST /eventos`.
+  `docker-compose.integridad.yml` conserva el adaptador HTTP determinista. Auditoría
+  sigue por HTTP mTLS: el rechazo queda registrado antes de responder.
 
 ## Vistas de arquitectura relevantes
 - **VC-004 Información**: `Pago{monto, tokenTarjeta (el PAN NO se almacena), fechaPago}`;
@@ -143,6 +175,11 @@ docker-compose.integridad.yml   tramo reproducible de C3/C4
 
 ## Comandos (desde `solventa-exp02/`)
 ```bash
+docker compose run --rm material        # compose general: CA, certificados y llaves
+docker compose run --rm pruebas
+bash scripts/experimento.sh             # corrida completa desde cero, evidencia en evidencias/<RUN_ID>/
+docker compose down -v
+
 docker compose -f docker-compose.pagos.yml run --rm material   # certs/ y secretos/ de desarrollo
 docker compose -f docker-compose.pagos.yml run --rm pruebas    # pytest
 docker compose -f docker-compose.pagos.yml up -d --build

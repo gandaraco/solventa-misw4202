@@ -12,7 +12,8 @@ from decimal import Decimal, InvalidOperation
 from flask import Flask, jsonify, request
 
 from comun import registro, tls
-from comun.auditoria import AuditoriaLog, AuditoriaNoDisponible, ClienteAuditoria
+from comun import auditoria as auditoria_util
+from comun.auditoria import AuditoriaNoDisponible
 from comun.ids import nuevo_id
 from pagos.almacen import Almacen
 from pagos.tokenizador import ClienteTokenizador, PanInvalido, TokenizadorNoDisponible
@@ -82,8 +83,7 @@ def _cliente_desde_entorno():
 
 
 def _auditoria_desde_entorno():
-    url = os.getenv("AUDITORIA_URL")
-    return ClienteAuditoria(url) if url else AuditoriaLog(log)
+    return auditoria_util.desde_entorno(log)
 
 
 def crear_app(almacen=None, tokenizador=None, auditoria=None):

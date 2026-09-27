@@ -37,10 +37,10 @@ def _json_canonico(valor):
                       ensure_ascii=False).encode("utf-8")
 
 
-def firmar(payload, llave_privada_pem, kid="consentimiento-v1"):
+def firmar(payload, llave_privada_pem, kid="consentimiento-v1", typ="JWS"):
     if not isinstance(payload, dict):
         raise TypeError("payload_debe_ser_objeto")
-    cabecera = {"alg": "RS256", "kid": kid, "typ": "JWS"}
+    cabecera = {"alg": "RS256", "kid": kid, "typ": typ}
     partes = (_b64e(_json_canonico(cabecera)), _b64e(_json_canonico(payload)))
     entrada = (partes[0] + "." + partes[1]).encode("ascii")
     llave = serialization.load_pem_private_key(llave_privada_pem, password=None)

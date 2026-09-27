@@ -1,4 +1,8 @@
-"""Productor de eventos de Consentimiento firmados con JWS."""
+"""Productor de eventos de Consentimiento firmados con JWS.
+
+Publica el sobre en Kafka si KAFKA_BOOTSTRAP esta definido; si no, por HTTP a
+SUSCRIPCION_URL (adaptador determinista de docker-compose.integridad.yml).
+"""
 
 import os
 from datetime import datetime, timezone
@@ -7,7 +11,7 @@ from pathlib import Path
 import requests
 from flask import Flask, jsonify, request
 
-from comun import jws, registro
+from comun import jws, kafka, registro
 from comun.ids import nuevo_id
 
 log = registro.configurar("ms-consentimiento")
@@ -25,6 +29,16 @@ class PublicadorHTTP:
         return respuesta.json()
 
 
+def _publicador_desde_entorno():
+    cfg_kafka = kafka.config_desde_entorno()
+    if cfg_kafka:
+        return kafka.PublicadorKafka(
+            cfg_kafka, os.getenv("TOPICO_CONSENTIMIENTOS", "solventa.consentimiento.eventos"))
+    if os.getenv("SUSCRIPCION_URL"):
+        return PublicadorHTTP(os.environ["SUSCRIPCION_URL"])
+    return None
+
+
 def _llave_desde_entorno():
     ruta = os.getenv("JWS_PRIVADA_ARCHIVO")
     if not ruta:
@@ -34,8 +48,8 @@ def _llave_desde_entorno():
 
 def crear_app(llave_privada=None, publicador=None):
     llave_privada = llave_privada or _llave_desde_entorno()
-    if publicador is None and os.getenv("SUSCRIPCION_URL"):
-        publicador = PublicadorHTTP(os.environ["SUSCRIPCION_URL"])
+    if publicador is None:
+        publicador = _publicador_desde_entorno()
     kid = os.getenv("JWS_KID", "consentimiento-v1")
     app = Flask(__name__)
 
@@ -64,7 +78,7 @@ def crear_app(llave_privada=None, publicador=None):
             return jsonify({**sobre, "publicado": False}), 201
         try:
             resultado = publicador.publicar(sobre)
-        except requests.RequestException as exc:
+        except (requests.RequestException, kafka.PublicacionFallida) as exc:
             log.error("evento=publicacion_fallida eventId=%s causa=%s",
                       event_id, type(exc).__name__)
             return jsonify({"error": "consumidor_no_disponible", "eventId": event_id}), 503
