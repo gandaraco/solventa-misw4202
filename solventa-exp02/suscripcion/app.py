@@ -1,7 +1,9 @@
 """Consumidor de eventos firmados de Consentimiento.
 
 La verificacion ocurre antes de llamar ``almacen.activar``. Este orden es la
-propiedad que demuestran INTEG-02 a INTEG-05.
+propiedad que demuestran INTEG-02 a INTEG-05. Los sobres llegan por
+``POST /eventos`` o, si KAFKA_BOOTSTRAP esta definido, desde el topico de
+consentimientos; ambos caminos usan ``procesar_sobre``.
 """
 
 import json
@@ -11,8 +13,8 @@ from pathlib import Path
 
 from flask import Flask, jsonify, request
 
-from comun import jws, registro
-from comun.auditoria import AuditoriaLog, ClienteAuditoria
+from comun import jws, kafka, registro
+from comun import auditoria as auditoria_util
 from suscripcion.almacen import AlmacenSuscripcion
 
 log = registro.configurar("ms-suscripcion")
@@ -27,8 +29,7 @@ def _llaves_desde_entorno():
 
 
 def _auditoria_desde_entorno():
-    url = os.getenv("AUDITORIA_URL")
-    return ClienteAuditoria(url) if url else AuditoriaLog(log)
+    return auditoria_util.desde_entorno(log)
 
 
 def crear_app(almacen=None, llaves_publicas=None, auditoria=None):
@@ -37,9 +38,10 @@ def crear_app(almacen=None, llaves_publicas=None, auditoria=None):
     auditoria = auditoria or _auditoria_desde_entorno()
     app = Flask(__name__)
 
-    @app.post("/eventos")
-    def consumir_evento():
-        sobre = request.get_json(silent=True) or {}
+    def procesar_sobre(sobre):
+        """Verifica y aplica un sobre. Mismo camino para HTTP y para Kafka."""
+        if not isinstance(sobre, dict):
+            sobre = {}
         event_id = _texto(sobre.get("eventId"), "evento_desconocido")
         marcador = _texto(sobre.get("marcador"), None)
         try:
@@ -48,8 +50,7 @@ def crear_app(almacen=None, llaves_publicas=None, auditoria=None):
         except jws.JWSInvalido as exc:
             _auditar(auditoria, event_id, marcador, "RECHAZADO", exc.motivo)
             log.warning("evento=jws_rechazado eventId=%s motivo=%s", event_id, exc.motivo)
-            return jsonify({"estado": "rechazado", "motivo": exc.motivo,
-                            "eventId": event_id}), 422
+            return {"estado": "rechazado", "motivo": exc.motivo, "eventId": event_id}, 422
 
         datos = payload["datos"]
         estado = almacen.activar(datos["suscripcionId"], event_id,
@@ -58,8 +59,12 @@ def crear_app(almacen=None, llaves_publicas=None, auditoria=None):
                  entidad_id=datos["suscripcionId"])
         log.info("evento=jws_aceptado eventId=%s suscripcion=%s",
                  event_id, datos["suscripcionId"])
-        return jsonify({"estado": "procesado", "eventId": event_id,
-                        "suscripcion": estado}), 202
+        return {"estado": "procesado", "eventId": event_id, "suscripcion": estado}, 202
+
+    @app.post("/eventos")
+    def consumir_evento():
+        cuerpo, codigo = procesar_sobre(request.get_json(silent=True))
+        return jsonify(cuerpo), codigo
 
     @app.get("/suscripciones/<suscripcion_id>")
     def consultar(suscripcion_id):
@@ -69,6 +74,14 @@ def crear_app(almacen=None, llaves_publicas=None, auditoria=None):
     def salud():
         return jsonify({"ok": True})
 
+    app.extensions["procesar_sobre"] = procesar_sobre
+    cfg_kafka = kafka.config_desde_entorno()
+    if cfg_kafka:
+        # Transporte asincrono: el consumidor entrega el sobre al mismo procesador.
+        kafka.ConsumidorKafka(
+            cfg_kafka, os.getenv("TOPICO_CONSENTIMIENTOS", "solventa.consentimiento.eventos"),
+            os.getenv("KAFKA_GRUPO", "ms-suscripcion"), procesar_sobre, log,
+        ).iniciar()
     return app
 
 

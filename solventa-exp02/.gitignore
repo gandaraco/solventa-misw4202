@@ -5,3 +5,8 @@ secretos/
 *.db
 __pycache__/
 .pytest_cache/
+
+# Evidencia generada por las corridas (capturas .pcap, logs, JSON).
+evidencias/*
+!evidencias/.gitkeep
+*.pcap

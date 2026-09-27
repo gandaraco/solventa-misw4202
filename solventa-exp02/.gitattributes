@@ -1,0 +1,3 @@
+# Los scripts de shell y la configuracion que se monta en contenedores Linux van con LF.
+*.sh text eol=lf
+kafka/*.properties text eol=lf

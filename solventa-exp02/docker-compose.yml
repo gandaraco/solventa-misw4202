@@ -1,0 +1,329 @@
+# Docker Compose general de EXP-02: confidencialidad (ASR-07) e integridad (ASR-08).
+#
+# Integra los tramos de docker-compose.pagos.yml y docker-compose.integridad.yml
+# con la infraestructura comun: CA y mTLS en todos los saltos, Kafka con TLS,
+# API Gateway + Autorizador OAuth2 y puntos de captura de trafico.
+#
+#   docker compose run --rm material        # CA, certificados y llaves (certs/, secretos/)
+#   docker compose up -d --build
+#   bash scripts/experimento.sh             # corrida completa con evidencia en evidencias/
+#
+# Flujo sincrono:  cliente --mTLS+JWT--> api-gateway --mTLS--> ms-pagos --mTLS--> tokenizador
+# Flujo asincrono: ms-consentimiento --JWS sobre Kafka (mTLS)--> ms-suscripcion
+# Auditoria:       ms-pagos, ms-suscripcion y api-gateway --mTLS--> auditoria
+#
+# Redes (emulan VC-005):
+#   red-borde        servicios con mTLS obligatorio. Solo api-gateway (5100) y
+#                    autorizador (5105) son puntos de entrada del producto; los
+#                    demas puertos se publican en 127.0.0.1 como instrumentacion
+#                    del arnes, tambien con mTLS (contratos de AGENTS.md).
+#   red-pci          ms-pagos <-> tokenizador. internal: emula ns-pagos-pci.
+#   red-datos-pci    tokenizador <-> su base de datos. internal.
+#   red-datos-pagos  ms-pagos <-> su base (127.0.0.1:5132, usuario de solo lectura del arnes).
+#
+# Cada servicio monta solo su certificado, su llave y la CA; las llaves
+# privadas de firma solo las monta quien firma. Requiere haber corrido `material`.
+
+name: arquitecturas-agiles
+
+x-tls: &tls
+  TLS_CA: /certs/ca.crt
+  LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+
+x-kafka: &kafka
+  KAFKA_BOOTSTRAP: kafka:9092
+  TOPICO_CONSENTIMIENTOS: solventa.consentimiento.eventos
+
+x-herramientas: &herramientas
+  build: {context: ., dockerfile: pruebas/Dockerfile}
+  image: arquitecturas-agiles/herramientas:exp02
+  volumes: [".:/w"]
+
+x-captura: &captura
+  build: {context: captura}
+  image: arquitecturas-agiles/captura:exp02
+  profiles: [captura]
+  cap_add: [NET_ADMIN, NET_RAW]
+  init: true
+  volumes: ["./evidencias:/evidencias"]
+
+services:
+  # --- Mensajeria ------------------------------------------------------------
+  kafka:
+    image: apache/kafka:3.8.1
+    environment:
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+      KAFKA_HEAP_OPTS: "-Xms256m -Xmx512m"
+    command:
+      - sh
+      - -c
+      - >-
+        cat /kafka/server.properties /secretos/kafka_ssl.properties > /tmp/server.properties &&
+        /opt/kafka/bin/kafka-storage.sh format --ignore-formatted -t "$$CLUSTER_ID" -c /tmp/server.properties &&
+        exec /opt/kafka/bin/kafka-server-start.sh /tmp/server.properties
+    volumes:
+      - ./kafka/server.properties:/kafka/server.properties:ro
+      - ./secretos/kafka_ssl.properties:/secretos/kafka_ssl.properties:ro
+      - ./certs/ca.crt:/certs/ca.crt:ro
+      - ./certs/kafka.p12:/certs/kafka.p12:ro
+    ports: ["127.0.0.1:5194:9094"]
+    networks: [red-borde]
+
+  kafka-topicos:
+    <<: *herramientas
+    environment:
+      <<: *tls
+      KAFKA_BOOTSTRAP: kafka:9092
+      TOPICOS: solventa.consentimiento.eventos
+      SERVICE_ID: kafka-topicos
+      TLS_CERT: /w/certs/kafka.crt
+      TLS_CLAVE: /w/certs/kafka.key
+      TLS_CA: /w/certs/ca.crt
+    command: python scripts/crear_topicos.py
+    networks: [red-borde]
+    depends_on: [kafka]
+
+  # --- Seguridad: autorizador y punto de entrada ------------------------------
+  autorizador:
+    build: {context: ., dockerfile: autorizador/Dockerfile}
+    image: arquitecturas-agiles/autorizador:exp02
+    environment:
+      <<: *tls
+      SERVICE_ID: autorizador
+      WORKERS: "1"
+      TLS_CERT: /certs/autorizador.crt
+      TLS_CLAVE: /certs/autorizador.key
+      JWT_PRIVADA_ARCHIVO: /secretos/autorizador_jwt.key
+    volumes:
+      - ./certs/ca.crt:/certs/ca.crt:ro
+      - ./certs/autorizador.crt:/certs/autorizador.crt:ro
+      - ./certs/autorizador.key:/certs/autorizador.key:ro
+      - ./secretos/autorizador_jwt.key:/secretos/autorizador_jwt.key:ro
+    ports: ["5105:8443"]
+    networks: [red-borde]
+
+  api-gateway:
+    build: {context: ., dockerfile: gateway/Dockerfile}
+    image: arquitecturas-agiles/api-gateway:exp02
+    environment:
+      <<: *tls
+      SERVICE_ID: api-gateway
+      TLS_CERT: /certs/api-gateway.crt
+      TLS_CLAVE: /certs/api-gateway.key
+      JWT_PUBLICA_ARCHIVO: /secretos/autorizador_jwt.pub
+      AUDITORIA_URL: https://auditoria:8443
+    volumes:
+      - ./certs/ca.crt:/certs/ca.crt:ro
+      - ./certs/api-gateway.crt:/certs/api-gateway.crt:ro
+      - ./certs/api-gateway.key:/certs/api-gateway.key:ro
+      - ./secretos/autorizador_jwt.pub:/secretos/autorizador_jwt.pub:ro
+    ports: ["5100:8443"]
+    networks: [red-borde]
+    depends_on: [ms-pagos, ms-consentimiento, ms-suscripcion, auditoria]
+
+  # --- Confidencialidad: MS Pagos + Tokenizacion (Oscar) ----------------------
+  bd-tokenizacion:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: boveda
+      POSTGRES_USER: boveda
+      POSTGRES_PASSWORD: boveda_dev   # solo desarrollo
+    networks: [red-datos-pci]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "boveda"]
+      interval: 3s
+      retries: 20
+
+  tokenizador:
+    build: {context: ., dockerfile: tokenizacion/Dockerfile}
+    image: arquitecturas-agiles/tokenizador:exp02
+    environment:
+      <<: *tls
+      SERVICE_ID: tokenizador
+      TLS_CERT: /certs/tokenizador.crt
+      TLS_CLAVE: /certs/tokenizador.key
+      BD_URL: postgresql+psycopg://boveda:boveda_dev@bd-tokenizacion/boveda
+      LLAVE_CIFRADO_ARCHIVO: /secretos/llave_cifrado
+      LLAVE_HMAC_ARCHIVO: /secretos/llave_hmac
+    volumes:
+      - ./certs/ca.crt:/certs/ca.crt:ro
+      - ./certs/tokenizador.crt:/certs/tokenizador.crt:ro
+      - ./certs/tokenizador.key:/certs/tokenizador.key:ro
+      - ./secretos/llave_cifrado:/secretos/llave_cifrado:ro
+      - ./secretos/llave_hmac:/secretos/llave_hmac:ro
+    networks: [red-pci, red-datos-pci]
+    depends_on:
+      bd-tokenizacion: {condition: service_healthy}
+
+  bd-pagos:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: pagos
+      POSTGRES_USER: pagos
+      POSTGRES_PASSWORD: pagos_dev   # solo desarrollo
+    volumes:
+      - ./bd/pagos_init.sql:/docker-entrypoint-initdb.d/pagos_init.sql:ro
+    ports: ["127.0.0.1:5132:5432"]
+    networks: [red-datos-pagos]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "pagos"]
+      interval: 3s
+      retries: 20
+
+  ms-pagos:
+    build: {context: ., dockerfile: pagos/Dockerfile}
+    image: arquitecturas-agiles/ms-pagos:exp02
+    environment:
+      <<: *tls
+      SERVICE_ID: ms-pagos
+      TLS_CERT: /certs/ms-pagos.crt
+      TLS_CLAVE: /certs/ms-pagos.key
+      BD_URL: postgresql+psycopg://pagos:pagos_dev@bd-pagos/pagos
+      TOKENIZADOR_URL: https://tokenizador:8443
+      AUDITORIA_URL: https://auditoria:8443
+    volumes:
+      - ./certs/ca.crt:/certs/ca.crt:ro
+      - ./certs/ms-pagos.crt:/certs/ms-pagos.crt:ro
+      - ./certs/ms-pagos.key:/certs/ms-pagos.key:ro
+    ports: ["127.0.0.1:5101:8443"]
+    networks: [red-borde, red-pci, red-datos-pagos]
+    depends_on:
+      bd-pagos: {condition: service_healthy}
+      tokenizador: {condition: service_started}
+      auditoria: {condition: service_started}
+
+  # --- Integridad: Consentimiento, Suscripcion y Auditoria (Hernan) -----------
+  auditoria:
+    build: {context: ., dockerfile: auditoria/Dockerfile}
+    image: arquitecturas-agiles/auditoria:exp02
+    environment:
+      <<: *tls
+      SERVICE_ID: auditoria
+      WORKERS: "1"   # un proceso: el candado de la cadena de hashes es local
+      TLS_CERT: /certs/auditoria.crt
+      TLS_CLAVE: /certs/auditoria.key
+      BD_URL: sqlite:////tmp/auditoria.db
+    command: ["gunicorn", "-c", "comun/gunicorn_conf.py", "auditoria.app:crear_app()"]
+    volumes:
+      - ./certs/ca.crt:/certs/ca.crt:ro
+      - ./certs/auditoria.crt:/certs/auditoria.crt:ro
+      - ./certs/auditoria.key:/certs/auditoria.key:ro
+    ports: ["127.0.0.1:5104:8443"]
+    networks: [red-borde]
+
+  ms-suscripcion:
+    build: {context: ., dockerfile: suscripcion/Dockerfile}
+    image: arquitecturas-agiles/ms-suscripcion:exp02
+    environment:
+      <<: [*tls, *kafka]
+      SERVICE_ID: ms-suscripcion
+      WORKERS: "1"   # un solo consumidor Kafka por grupo y SQLite local
+      TLS_CERT: /certs/ms-suscripcion.crt
+      TLS_CLAVE: /certs/ms-suscripcion.key
+      BD_URL: sqlite:////tmp/suscripcion.db
+      JWS_PUBLICA_ARCHIVO: /secretos/consentimiento.pub
+      JWS_KID: consentimiento-v1
+      AUDITORIA_URL: https://auditoria:8443
+      KAFKA_GRUPO: ms-suscripcion
+    command: ["gunicorn", "-c", "comun/gunicorn_conf.py", "suscripcion.app:crear_app()"]
+    volumes:
+      - ./certs/ca.crt:/certs/ca.crt:ro
+      - ./certs/ms-suscripcion.crt:/certs/ms-suscripcion.crt:ro
+      - ./certs/ms-suscripcion.key:/certs/ms-suscripcion.key:ro
+      - ./secretos/consentimiento.pub:/secretos/consentimiento.pub:ro
+    ports: ["127.0.0.1:5103:8443"]
+    networks: [red-borde]
+    depends_on:
+      auditoria: {condition: service_started}
+      kafka-topicos: {condition: service_completed_successfully}
+
+  ms-consentimiento:
+    build: {context: ., dockerfile: consentimiento/Dockerfile}
+    image: arquitecturas-agiles/ms-consentimiento:exp02
+    environment:
+      <<: [*tls, *kafka]
+      SERVICE_ID: ms-consentimiento
+      WORKERS: "1"
+      TLS_CERT: /certs/ms-consentimiento.crt
+      TLS_CLAVE: /certs/ms-consentimiento.key
+      JWS_PRIVADA_ARCHIVO: /secretos/consentimiento.key
+      JWS_KID: consentimiento-v1
+    command: ["gunicorn", "-c", "comun/gunicorn_conf.py", "consentimiento.app:crear_app()"]
+    volumes:
+      - ./certs/ca.crt:/certs/ca.crt:ro
+      - ./certs/ms-consentimiento.crt:/certs/ms-consentimiento.crt:ro
+      - ./certs/ms-consentimiento.key:/certs/ms-consentimiento.key:ro
+      - ./secretos/consentimiento.key:/secretos/consentimiento.key:ro
+    ports: ["127.0.0.1:5102:8443"]
+    networks: [red-borde]
+    depends_on:
+      kafka-topicos: {condition: service_completed_successfully}
+
+  # --- Captura de trafico (perfil "captura") ----------------------------------
+  # Cada una se adjunta al espacio de red de un servicio y ve todos sus
+  # segmentos. RUN_ID lo fija scripts/experimento.sh.
+  captura-gateway:
+    <<: *captura
+    network_mode: "service:api-gateway"
+    command: ["-w", "/evidencias/${RUN_ID:-sin_run}/capturas/gateway.pcap"]
+
+  captura-pagos:
+    <<: *captura
+    network_mode: "service:ms-pagos"
+    command: ["-w", "/evidencias/${RUN_ID:-sin_run}/capturas/ms-pagos.pcap"]
+
+  captura-kafka:
+    <<: *captura
+    network_mode: "service:kafka"
+    command: ["-w", "/evidencias/${RUN_ID:-sin_run}/capturas/kafka.pcap"]
+
+  # --- Herramientas (perfil "herramientas": no arrancan con `up`) -------------
+  material:
+    <<: *herramientas
+    profiles: [herramientas]
+    command: python scripts/generar_material.py
+    network_mode: none
+
+  pruebas:
+    <<: *herramientas
+    profiles: [herramientas]
+    command: python -m pytest pruebas -q -p no:cacheprovider
+    network_mode: none
+
+  # Verificacion de infraestructura e integracion (Donaldo): mTLS en cada salto,
+  # JWT, Kafka, aislamiento, capturas y logs. Escribe evidencias/<RUN_ID>/.
+  verificacion-infraestructura:
+    <<: *herramientas
+    profiles: [herramientas]
+    environment:
+      RUN_ID: "${RUN_ID:-}"
+    command: python scripts/verificar_infraestructura.py
+    networks: [red-borde, red-datos-pagos]
+
+  # Verificaciones de los tramos, ahora contra el stack integrado.
+  verificacion:
+    <<: *herramientas
+    profiles: [herramientas]
+    command: python scripts/verificar_confidencialidad.py
+    networks: [red-borde, red-datos-pagos]
+
+  verificacion-integridad:
+    <<: *herramientas
+    profiles: [herramientas]
+    volumes:
+      - ".:/w"
+      - "./secretos:/secretos:ro"
+    environment:
+      SUSCRIPCION_URL: https://ms-suscripcion:8443
+      AUDITORIA_URL: https://auditoria:8443
+      CERT_CLIENTE: certs/harness.crt
+      CLAVE_CLIENTE: certs/harness.key
+      CA_BUNDLE: certs/ca.crt
+    command: python scripts/verificar_integridad.py
+    networks: [red-borde]
+
+networks:
+  red-borde: {}
+  red-pci: {internal: true}
+  red-datos-pci: {internal: true}
+  red-datos-pagos: {}
